@@ -2,13 +2,14 @@ import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import type { AIService, ChatMessage } from '../types';
 
 const cerebras = new Cerebras();
+const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'zai-glm-4.7';
 
 export const cerebrasService: AIService = {
   name: 'Cerebras',
   async chat(messages: ChatMessage[]) {
     const stream = await cerebras.chat.completions.create({
       messages: messages as any,
-      model: 'zai-glm-4.7',
+      model: CEREBRAS_MODEL,
       stream: true,
       max_completion_tokens: 65000,
       temperature: 1,
