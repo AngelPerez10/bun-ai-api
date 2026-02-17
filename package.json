@@ -1,0 +1,21 @@
+{
+  "name": "bun-ai-api",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun index.ts",
+    "dev": "bun --watch index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.0.9"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@cerebras/cerebras_cloud_sdk": "^1.59.0",
+    "groq-sdk": "^0.37.0"
+  }
+}

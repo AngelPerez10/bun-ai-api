@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: multi-ai-api
+    runtime: docker
+    plan: free
+    buildCommand: bun install
+    startCommand: bun run index.ts
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: REQUIRE_AUTH
+        value: true
+      - key: RATE_LIMIT_ENABLED
+        value: true
+      - key: RATE_LIMIT_MAX
+        value: 10
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 60000
