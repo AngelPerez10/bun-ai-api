@@ -222,8 +222,9 @@ const server = Bun.serve({
     if (req.method === 'POST' && pathname === '/chat') {
       try {
         // Autenticación
-        const apiKey = config.requireAuth ? extractApiKey(req) : null;
+        let apiKey: string | null = null;
         if (config.requireAuth) {
+          apiKey = extractApiKey(req);
           if (!apiKey) {
             return createErrorResponse(req, 'API key required. Use Authorization: Bearer YOUR_KEY or X-API-Key header', 401);
           }
