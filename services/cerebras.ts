@@ -2,7 +2,7 @@ import Cerebras from '@cerebras/cerebras_cloud_sdk';
 import type { AIService, ChatMessage } from '../types';
 
 const cerebras = new Cerebras();
-const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'zai-glm-4.7';
+const CEREBRAS_MODEL = process.env.CEREBRAS_MODEL || 'llama3.1-8b';
 
 export const cerebrasService: AIService = {
   name: 'Cerebras',
