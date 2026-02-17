@@ -233,12 +233,23 @@ const server = Bun.serve({
         try {
           const raw = await req.text();
           if (!raw) {
+            logger.warn('Empty request body', {
+              contentType: req.headers.get('content-type')
+            });
             return createErrorResponse(req, 'Request body is required', 400);
           }
           body = JSON.parse(raw);
         } catch (err) {
           logger.warn('Invalid JSON body', {
-            error: err instanceof Error ? err.message : String(err)
+            error: err instanceof Error ? err.message : String(err),
+            contentType: req.headers.get('content-type'),
+            bodyLength: (() => {
+              try {
+                return (req as any).__rawBodyLength ?? null;
+              } catch {
+                return null;
+              }
+            })()
           });
           return createErrorResponse(req, 'Invalid JSON body', 400);
         }
