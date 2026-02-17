@@ -181,8 +181,6 @@ const server = Bun.serve({
 
     // Chat endpoint
     if (req.method === 'POST' && pathname === '/chat') {
-      const service = getNextService();
-      
       try {
         // Autenticación
         if (config.requireAuth) {
@@ -235,15 +233,34 @@ const server = Bun.serve({
         const { messages } = validateChatRequest(body);
 
         logger.info('Chat request received', { 
-          service: service.name,
+          service: 'auto',
           messageCount: messages.length 
         });
 
-        // Llamar al servicio
-        const stream = await service.chat(messages);
+        const failures: { service: string; error: string }[] = [];
+        const maxAttempts = services.length;
+        let stream: AsyncIterable<string> | null = null;
+        let selectedServiceName = '';
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const service = getNextService();
+          selectedServiceName = service.name;
+          try {
+            stream = await service.chat(messages);
+            if (!stream) {
+              throw new Error('Service returned no stream');
+            }
+            break;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            failures.push({ service: service.name, error: msg });
+            logger.warn('Service failed, trying next', { service: service.name, error: msg });
+          }
+        }
 
         if (!stream) {
-          throw new Error('Service returned no stream');
+          const details = failures.map(f => `${f.service}: ${f.error}`).join(' | ');
+          throw new Error(`All providers failed. ${details}`);
         }
 
         const textEncoder = new TextEncoder();
@@ -260,16 +277,16 @@ const server = Bun.serve({
               controller.close();
               
               const duration = Date.now() - startTime;
-              metrics.recordRequest(service.name, duration, true);
+              metrics.recordRequest(selectedServiceName, duration, true);
               logger.info('Chat request completed', { 
-                service: service.name,
+                service: selectedServiceName,
                 duration: `${duration}ms`
               });
             } catch (err) {
               const duration = Date.now() - startTime;
-              metrics.recordRequest(service.name, duration, false);
+              metrics.recordRequest(selectedServiceName, duration, false);
               logger.error('Stream error', { 
-                service: service.name,
+                service: selectedServiceName,
                 error: err instanceof Error ? err.message : String(err)
               });
               controller.error(err);
@@ -287,7 +304,6 @@ const server = Bun.serve({
         });
       } catch (err) {
         const duration = Date.now() - startTime;
-        metrics.recordRequest(service.name, duration, false);
         
         if (err instanceof ValidationError) {
           logger.warn('Validation error', { error: err.message });
@@ -295,7 +311,6 @@ const server = Bun.serve({
         }
         
         logger.error('Chat request failed', { 
-          service: service.name,
           error: err instanceof Error ? err.message : String(err)
         });
         return createErrorResponse(req, 'Internal server error', 500);
