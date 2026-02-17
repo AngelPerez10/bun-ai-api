@@ -229,7 +229,15 @@ const server = Bun.serve({
         }
         
         // Validar request
-        const body = await req.json();
+        let body: any;
+        try {
+          body = await req.json();
+        } catch (err) {
+          logger.warn('Invalid JSON body', {
+            error: err instanceof Error ? err.message : String(err)
+          });
+          return createErrorResponse(req, 'Invalid JSON body', 400);
+        }
         const { messages } = validateChatRequest(body);
 
         logger.info('Chat request received', { 
