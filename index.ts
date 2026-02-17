@@ -20,10 +20,43 @@ const services: AIService[] = [
 ];
 let currentServiceIndex = 0;
 
+const stickyConversations = new Map<string, { serviceIndex: number; expiresAt: number }>();
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function getConversationKey(apiKey: string | null, messages: ChatMessage[]): string {
+  const first = messages[0];
+  const seed = `${apiKey ?? 'anon'}|${first?.role ?? ''}|${first?.content ?? ''}`;
+  return seed;
+}
+
+function getStickyServiceIndex(conversationKey: string): number | null {
+  const now = Date.now();
+  const entry = stickyConversations.get(conversationKey);
+  if (!entry) return null;
+  if (entry.expiresAt <= now) {
+    stickyConversations.delete(conversationKey);
+    return null;
+  }
+  return entry.serviceIndex;
+}
+
+function setStickyServiceIndex(conversationKey: string, serviceIndex: number) {
+  const ttlMs = Number(process.env.STICKY_CONVERSATION_TTL_MS ?? 30 * 60 * 1000);
+  stickyConversations.set(conversationKey, { serviceIndex, expiresAt: Date.now() + ttlMs });
+}
+
 function getNextService(): AIService {
   const service = services[currentServiceIndex];
   currentServiceIndex = (currentServiceIndex + 1) % services.length;
   return service!;
+}
+
+function getServiceByIndex(index: number): AIService {
+  const normalized = ((index % services.length) + services.length) % services.length;
+  return services[normalized]!;
 }
 
 function setCorsHeaders(req: Request, headers: Record<string, string>) {
@@ -76,6 +109,7 @@ if (config.requireAuth) {
 
 const server = Bun.serve({
   port: config.port,
+  idleTimeout: Number(process.env.IDLE_TIMEOUT_S ?? 120),
   async fetch(req: Request) {
     const { pathname } = new URL(req.url);
     const startTime = Date.now();
@@ -183,9 +217,8 @@ const server = Bun.serve({
     if (req.method === 'POST' && pathname === '/chat') {
       try {
         // Autenticación
+        const apiKey = config.requireAuth ? extractApiKey(req) : null;
         if (config.requireAuth) {
-          const apiKey = extractApiKey(req);
-          
           if (!apiKey) {
             return createErrorResponse(req, 'API key required. Use Authorization: Bearer YOUR_KEY or X-API-Key header', 401);
           }
@@ -204,7 +237,7 @@ const server = Bun.serve({
         
         // Rate limiting
         if (config.rateLimitEnabled) {
-          const identifier = extractApiKey(req) || req.headers.get('x-forwarded-for') || 'anonymous';
+          const identifier = apiKey || req.headers.get('x-forwarded-for') || 'anonymous';
           const rateLimit = rateLimiter.check(identifier);
           
           if (!rateLimit.allowed) {
@@ -265,14 +298,47 @@ const server = Bun.serve({
         let stream: AsyncIterable<string> | null = null;
         let selectedServiceName = '';
 
+        const conversationKey = getConversationKey(apiKey, messages);
+        const stickyIndex = getStickyServiceIndex(conversationKey);
+        let startIndex = stickyIndex ?? currentServiceIndex;
+
+        const openrouterRetries = Number(process.env.OPENROUTER_RETRIES ?? 3);
+        const openrouterBackoffMs = Number(process.env.OPENROUTER_BACKOFF_MS ?? 1500);
+
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          const service = getNextService();
+          const serviceIndex = (startIndex + attempt) % services.length;
+          const service = getServiceByIndex(serviceIndex);
           selectedServiceName = service.name;
+
           try {
-            stream = await service.chat(messages);
+            if (service.name === 'OpenRouter (DeepSeek)') {
+              let lastErr: unknown = null;
+              for (let i = 0; i <= openrouterRetries; i++) {
+                try {
+                  stream = await service.chat(messages);
+                  lastErr = null;
+                  break;
+                } catch (err) {
+                  lastErr = err;
+                  const msg = err instanceof Error ? err.message : String(err);
+                  const isRateLimited = msg.includes('429') || msg.toLowerCase().includes('rate-limited');
+                  if (!isRateLimited || i >= openrouterRetries) {
+                    throw err;
+                  }
+                  await sleep(openrouterBackoffMs * Math.pow(2, i));
+                }
+              }
+              if (!stream && lastErr) throw lastErr;
+            } else {
+              stream = await service.chat(messages);
+            }
+
             if (!stream) {
               throw new Error('Service returned no stream');
             }
+
+            setStickyServiceIndex(conversationKey, serviceIndex);
+            currentServiceIndex = (serviceIndex + 1) % services.length;
             break;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
