@@ -11,9 +11,9 @@ export const cerebrasService: AIService = {
       messages: messages as any,
       model: CEREBRAS_MODEL,
       stream: true,
-      max_completion_tokens: 65000,
-      temperature: 1,
-      top_p: 0.95
+      max_completion_tokens: 2048,
+      temperature: 0.2,
+      top_p: 1
     });
 
     return (async function* () {
