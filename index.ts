@@ -32,6 +32,11 @@ function getConversationKey(apiKey: string | null, messages: ChatMessage[]): str
   return seed;
 }
 
+function getSelectionStrategy(): 'round_robin' | 'sticky' {
+  const raw = (process.env.SELECTION_STRATEGY ?? 'round_robin').toLowerCase();
+  return raw === 'sticky' ? 'sticky' : 'round_robin';
+}
+
 function getStickyServiceIndex(conversationKey: string): number | null {
   const now = Date.now();
   const entry = stickyConversations.get(conversationKey);
@@ -298,9 +303,10 @@ const server = Bun.serve({
         let stream: AsyncIterable<string> | null = null;
         let selectedServiceName = '';
 
+        const selectionStrategy = getSelectionStrategy();
         const conversationKey = getConversationKey(apiKey, messages);
-        const stickyIndex = getStickyServiceIndex(conversationKey);
-        let startIndex = stickyIndex ?? currentServiceIndex;
+        const stickyIndex = selectionStrategy === 'sticky' ? getStickyServiceIndex(conversationKey) : null;
+        let startIndex = selectionStrategy === 'sticky' ? (stickyIndex ?? currentServiceIndex) : currentServiceIndex;
 
         const openrouterRetries = Number(process.env.OPENROUTER_RETRIES ?? 3);
         const openrouterBackoffMs = Number(process.env.OPENROUTER_BACKOFF_MS ?? 1500);
@@ -337,7 +343,9 @@ const server = Bun.serve({
               throw new Error('Service returned no stream');
             }
 
-            setStickyServiceIndex(conversationKey, serviceIndex);
+            if (selectionStrategy === 'sticky') {
+              setStickyServiceIndex(conversationKey, serviceIndex);
+            }
             currentServiceIndex = (serviceIndex + 1) % services.length;
             break;
           } catch (err) {
