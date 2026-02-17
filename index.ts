@@ -231,7 +231,11 @@ const server = Bun.serve({
         // Validar request
         let body: any;
         try {
-          body = await req.json();
+          const raw = await req.text();
+          if (!raw) {
+            return createErrorResponse(req, 'Request body is required', 400);
+          }
+          body = JSON.parse(raw);
         } catch (err) {
           logger.warn('Invalid JSON body', {
             error: err instanceof Error ? err.message : String(err)
