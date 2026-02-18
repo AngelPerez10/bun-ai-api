@@ -364,15 +364,62 @@ const server = Bun.serve({
         const textEncoder = new TextEncoder();
         const readableStream = new ReadableStream<Uint8Array>({
           async start(controller) {
+            let finished = false;
+            let aborted = false;
+
+            const safeClose = () => {
+              if (finished) return;
+              finished = true;
+              try {
+                controller.close();
+              } catch {
+                // ignore double-close
+              }
+            };
+
+            const safeError = (err: unknown) => {
+              if (finished) return;
+              finished = true;
+              try {
+                controller.error(err);
+              } catch {
+                // ignore error after close
+              }
+            };
+
+            const onAbort = () => {
+              aborted = true;
+              safeClose();
+            };
+
+            if (req.signal?.aborted) {
+              onAbort();
+              return;
+            }
+
+            req.signal?.addEventListener('abort', onAbort);
             try {
               for await (const chunk of stream) {
+                if (aborted || finished) break;
                 const ssePayload = chunk
                   .split('\n')
                   .map(line => `data: ${line}`)
                   .join('\n') + '\n\n';
-                controller.enqueue(textEncoder.encode(ssePayload));
+                try {
+                  controller.enqueue(textEncoder.encode(ssePayload));
+                } catch (err) {
+                  // Client disconnected / stream already closed
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.toLowerCase().includes('controller is already closed') || msg.toLowerCase().includes('invalid state')) {
+                    aborted = true;
+                    safeClose();
+                    break;
+                  }
+                  throw err;
+                }
               }
-              controller.close();
+
+              safeClose();
               
               const duration = Date.now() - startTime;
               metrics.recordRequest(selectedServiceName, duration, true);
@@ -387,7 +434,11 @@ const server = Bun.serve({
                 service: selectedServiceName,
                 error: err instanceof Error ? err.message : String(err)
               });
-              controller.error(err);
+              if (!aborted && !finished) {
+                safeError(err);
+              }
+            } finally {
+              req.signal?.removeEventListener('abort', onAbort);
             }
           },
         });
